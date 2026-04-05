@@ -5,12 +5,12 @@ from pathlib import Path
 
 # Configuration for Sneaky Imagen
 # You can customize these URLs before building the image
-CHECKPOINT_URL = "https://civitai.com/api/download/models/1759168?type=Model&format=SafeTensor&size=full&fp=fp16"
-LORA_URLS = ["https://civitai.com/api/download/models/135867?type=Model&format=SafeTensor"]
+CHECKPOINT_URL = "https://civitai.com/api/download/models/2778052"
+LORA_URLS = "https://civitai.com/api/download/models/818030"
 VAE_URL = "https://civitai.com/api/download/models/333245?type=Model&format=SafeTensor"
 
 # Optional: Set a CivitAI token if downloading restricted models
-CIVITAI_TOKEN = os.environ.get("CIVITAI_TOKEN", "daa65fe2bceb540c0a1a9e7cf2ab1245") 
+CIVITAI_TOKEN = os.environ.get("CIVITAI_TOKEN", "e0f8cbac3f574543aca939a730ed67bc") 
 
 MODELS_DIR = "/models"
 CHECKPOINT_DIR = f"{MODELS_DIR}/checkpoints"
