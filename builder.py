@@ -6,6 +6,7 @@ from pathlib import Path
 # Configuration for Sneaky Imagen
 # You can customize these URLs before building the image
 CHECKPOINT_URL = "https://civitai.com/api/download/models/2778052"
+LORA_URLS = ["https://civitai.com/api/download/models/818030"]
 LORA_URLS = "https://civitai.com/api/download/models/818030"
 VAE_URL = "https://civitai.com/api/download/models/333245?type=Model&format=SafeTensor"
 
