@@ -4,10 +4,12 @@ import re
 from pathlib import Path
 
 # Configuration for Sneaky Imagen
+# You can customize these URLs before building the image
 CHECKPOINT_URL = "https://civitai.com/api/download/models/2778052"
-LORA_URLS = ["https://civitai.com/api/download/models/818030"]
+# ✅ Disable LoRA
+LORA_URLS = []
 
-# ❌ Disable VAE completely
+# ✅ Disable VAE
 VAE_URL = None
 
 # Optional: Set a CivitAI token if downloading restricted models
@@ -38,8 +40,7 @@ def download_file(url, output_dir, token=None):
         if filename_match and filename_match[0][0]:
             filename = filename_match[0][0].strip('\'"')
         else:
-            # ✅ FIX: avoid overwrite bug
-            filename = os.path.basename(url).split("?")[0] or "model.safetensors"
+            filename = "model.safetensors" # Fallback
             
         output_path = os.path.join(output_dir, filename)
         
@@ -55,7 +56,7 @@ def download_file(url, output_dir, token=None):
                 if chunk:
                     f.write(chunk)
                     downloaded += len(chunk)
-                    if total_size > 0 and downloaded % (1024*1024*100) == 0:
+                    if total_size > 0 and downloaded % (1024*1024*100) == 0: # Print every 100MB
                         print(f"Downloaded {downloaded/1024/1024:.2f} MB")
                         
         print(f"Downloaded {filename} to {output_path}")
@@ -77,8 +78,8 @@ if __name__ == "__main__":
         if url:
             download_file(url, LORA_DIR, CIVITAI_TOKEN)
             
-    # ❌ VAE download REMOVED
-    # if VAE_URL:
-    #     download_file(VAE_URL, VAE_DIR, CIVITAI_TOKEN)
+    # Download VAE
+    if VAE_URL:
+        download_file(VAE_URL, VAE_DIR, CIVITAI_TOKEN)
         
     print("Build-time download complete.")
