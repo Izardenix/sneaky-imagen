@@ -5,7 +5,6 @@ import re
 # Configuration
 CHECKPOINT_URL = "https://civitai.com/api/download/models/2778052"
 
-# ❌ Disable LoRA & VAE completely
 LORA_URLS = []
 VAE_URL = None
 
