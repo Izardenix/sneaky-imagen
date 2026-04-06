@@ -91,6 +91,7 @@ def handler(job):
     width = job_input.get("width", 1024)
     steps = job_input.get("steps", 30)
     cfg_scale = job_input.get("cfg_scale", 5.5)
+    num_images = int(job_input.get("num_images", 1))
     seed = job_input.get("seed", None)
     scheduler_type = job_input.get("scheduler", "Euler a")
 
@@ -108,13 +109,30 @@ def handler(job):
         )
 
     # Seed
-    if seed:
-        generator = torch.Generator(device=device).manual_seed(seed)
-    else:
-        seed = torch.seed()
-        generator = torch.Generator(device=device).manual_seed(seed)
+    num_images = int(job_input.get("num_images", 1))
 
-    print(f"Generating: {prompt[:60]}... | Seed={seed}")
+    generators = []
+    seeds = []
+
+    if seed is not None:
+        # 🔁 deterministic but varied (based on provided seed)
+        import random
+        random.seed(seed)
+
+        for _ in range(num_images):
+            s = random.randint(0, 2**32 - 1)
+            seeds.append(s)
+            gen = torch.Generator(device=device).manual_seed(s)
+            generators.append(gen)
+    else:
+        # 🎲 fully random seeds
+        for _ in range(num_images):
+            s = torch.randint(0, 2**32 - 1, (1,)).item()
+            seeds.append(s)
+            gen = torch.Generator(device=device).manual_seed(s)
+            generators.append(gen)
+
+    print(f"Generating {num_images} images with seeds: {seeds}")
 
     try:
         output = pipe(
@@ -124,32 +142,38 @@ def handler(job):
             width=width,
             num_inference_steps=steps,
             guidance_scale=cfg_scale,
-            generator=generator
+            generator=generators,
+            num_images_per_prompt=num_images
         )
 
-        image = output.images[0]
+        images = output.images
 
-        # Convert to base64
-        buffered = io.BytesIO()
+        # Convert all images to base64
+        encoded_images = []
 
-        if output_format == "PNG":
-            image.save(buffered, format="PNG")
-        else:
-            if image.mode in ("RGBA", "P"):
-                image = image.convert("RGB")
-            image.save(buffered, format="JPEG", quality=output_quality)
+        for image in images:
+            buffered = io.BytesIO()
 
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            if output_format == "PNG":
+                image.save(buffered, format="PNG")
+            else:
+                if image.mode in ("RGBA", "P"):
+                    image = image.convert("RGB")
+                image.save(buffered, format="JPEG", quality=output_quality)
+
+            img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+            encoded_images.append(img_str)
 
         # 🔥 IMPORTANT: reduce VRAM issues
         if device == "cuda":
             torch.cuda.empty_cache()
 
         return {
-            "image": img_str,
+            "images": encoded_images,   # ✅ now array
             "image_format": output_format.lower(),
             "seed": seed,
             "params": {
+                "num_images": len(encoded_images),
                 "width": width,
                 "height": height,
                 "steps": steps,
