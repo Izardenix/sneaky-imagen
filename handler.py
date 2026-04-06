@@ -3,7 +3,7 @@ import torch
 import runpod
 import base64
 import io
-from diffusers import FluxPipeline, StableDiffusionXLPipeline, AutoencoderKL, EulerAncestralDiscreteScheduler, DPMSolverMultistepScheduler
+from diffusers import FluxPipeline, StableDiffusionXLPipeline, EulerAncestralDiscreteScheduler, DPMSolverMultistepScheduler
 from PIL import Image
 
 # Configuration
@@ -12,125 +12,92 @@ dtype = torch.bfloat16 if device == "cuda" else torch.float32
 
 MODELS_DIR = "/models"
 CHECKPOINT_DIR = f"{MODELS_DIR}/checkpoints"
-LORA_DIR = f"{MODELS_DIR}/loras"
-VAE_DIR = f"{MODELS_DIR}/vae"
 
-# Global pipeline variable
+# Global pipeline
 pipe = None
 pipeline_info = {}
 
 def load_models():
     global pipe, pipeline_info
-    
-    print("Loading models...")
-    
-    # Check if models exist in the baked-in directory
+
+    print("Loading checkpoint only (no LoRA, no VAE)...")
+
     checkpoint_path = None
     if os.path.exists(CHECKPOINT_DIR):
         files = [f for f in os.listdir(CHECKPOINT_DIR) if f.endswith('.safetensors')]
         if files:
             checkpoint_path = os.path.join(CHECKPOINT_DIR, files[0])
-            print(f"Found baked-in checkpoint: {checkpoint_path}")
-            
-    vae_path = None
-    if os.path.exists(VAE_DIR):
-        files = [f for f in os.listdir(VAE_DIR) if f.endswith('.safetensors')]
-        if files:
-            vae_path = os.path.join(VAE_DIR, files[0])
-            print(f"Found baked-in VAE: {vae_path}")
-            
-    lora_paths = []
-    if os.path.exists(LORA_DIR):
-        lora_paths = [os.path.join(LORA_DIR, f) for f in os.listdir(LORA_DIR) if f.endswith('.safetensors')]
-        print(f"Found {len(lora_paths)} baked-in LoRAs")
+            print(f"Found checkpoint: {checkpoint_path}")
 
     if not checkpoint_path:
-        print("No baked-in checkpoint found! Check build process.")
+        print("❌ No checkpoint found!")
         return False
 
-    # Load VAE
-    vae = None
-    if vae_path:
-        try:
-            vae = AutoencoderKL.from_single_file(vae_path, torch_dtype=dtype)
-        except Exception as e:
-            print(f"Error loading VAE: {e}")
+    model_type = os.environ.get("MODEL_TYPE", "SDXL")
 
-    # Determine model type (simple heuristic or env var)
-    # Default to SDXL as per original script default
-    model_type = os.environ.get("MODEL_TYPE", "SDXL") 
-    
-    print(f"Loading {model_type} pipeline from {checkpoint_path}...")
-    
-    if model_type == "Flux":
-        pipe = FluxPipeline.from_single_file(
-            checkpoint_path,
-            vae=vae,
-            torch_dtype=dtype
-        )
-    else: # SDXL
-        pipe = StableDiffusionXLPipeline.from_single_file(
-            checkpoint_path,
-            vae=vae,
-            torch_dtype=dtype
-        )
-        
-    pipe = pipe.to(device)
-    
-    # Enable memory optimizations
-    if device == "cuda":
-        pipe.enable_model_cpu_offload()
-        pipe.enable_vae_slicing()
-        
-    # Load LoRAs
-    if lora_paths:
-        print("Loading LoRAs...")
-        loaded_loras = []
-        for i, lora_path in enumerate(lora_paths):
-            try:
-                adapter_name = f"lora_{i+1}"
-                pipe.load_lora_weights(lora_path, adapter_name=adapter_name)
-                loaded_loras.append(adapter_name)
-                print(f"Loaded LoRA: {lora_path}")
-            except Exception as e:
-                print(f"Error loading LoRA {i+1}: {e}")
-                
-        # Set adapters active
-        if loaded_loras:
-            # Default scale 0.8 as per script
-            scales = [0.8] * len(loaded_loras)
-            pipe.set_adapters(loaded_loras, adapter_weights=scales)
+    print(f"Loading {model_type} pipeline...")
 
-    pipeline_info = {
-        "model_type": model_type,
-        "loaded": True
-    }
-    print("Models loaded successfully!")
-    return True
+    try:
+        if model_type == "Flux":
+            pipe = FluxPipeline.from_single_file(
+                checkpoint_path,
+                torch_dtype=dtype
+            )
+        else:
+            pipe = StableDiffusionXLPipeline.from_single_file(
+                checkpoint_path,
+                torch_dtype=dtype
+            )
 
-# Initialize models at startup
+        pipe = pipe.to(device)
+
+        if device == "cuda":
+            pipe.enable_model_cpu_offload()
+            pipe.enable_vae_slicing()
+
+        pipeline_info["model_type"] = model_type
+        pipeline_info["loaded"] = True
+
+        print("✅ Model loaded successfully (checkpoint only)")
+        return True
+
+    except Exception as e:
+        print(f"❌ Error loading model: {e}")
+        return False
+
+
+# Load at startup
 load_models()
 
+
 def handler(job):
+    global pipe
+
     job_input = job["input"]
-    
+
     if not pipeline_info.get("loaded"):
         return {"error": "Pipeline not loaded"}
 
-    # Extract parameters with defaults from imagen.py
-    prompt = job_input.get("prompt", "a beautiful landscape with mountains and a lake, highly detailed, 8k, photorealistic")
-    negative_prompt = job_input.get("negative_prompt", "blurry, low quality, distorted, ugly, bad anatomy")
+    prompt = job_input.get(
+        "prompt",
+        "a beautiful landscape with mountains and a lake, highly detailed"
+    )
+    negative_prompt = job_input.get(
+        "negative_prompt",
+        "blurry, low quality, distorted, ugly"
+    )
+
     height = job_input.get("height", 1024)
     width = job_input.get("width", 1024)
     steps = job_input.get("steps", 30)
     cfg_scale = job_input.get("cfg_scale", 5.5)
     seed = job_input.get("seed", None)
     scheduler_type = job_input.get("scheduler", "Euler a")
-    clip_skip = job_input.get("clip_skip", 2) # SDXL only
-    output_format = job_input.get("output_format", "JPEG").upper()  # JPEG or PNG
-    output_quality = int(job_input.get("output_quality", 90))  # JPEG quality 1-95
 
-    # Configure Scheduler
+    output_format = job_input.get("output_format", "JPEG").upper()
+    output_quality = int(job_input.get("output_quality", 90))
+
+    # Scheduler
     if scheduler_type == "Euler a":
         pipe.scheduler = EulerAncestralDiscreteScheduler.from_config(pipe.scheduler.config)
     elif scheduler_type == "DPM++ 2M Karras":
@@ -139,44 +106,44 @@ def handler(job):
             use_karras_sigmas=True,
             algorithm_type="dpmsolver++"
         )
-        
-    generator = None
+
+    # Seed
     if seed:
         generator = torch.Generator(device=device).manual_seed(seed)
     else:
-        # Generate a seed if none provided so we can return it
         seed = torch.seed()
         generator = torch.Generator(device=device).manual_seed(seed)
 
-    print(f"Generating: Prompt='{prompt[:50]}...', Steps={steps}, Seed={seed}")
-
-    gen_params = {
-        "prompt": prompt,
-        "negative_prompt": negative_prompt,
-        "height": height,
-        "width": width,
-        "num_inference_steps": steps,
-        "guidance_scale": cfg_scale,
-        "generator": generator
-    }
-
-    if pipeline_info["model_type"] == "SDXL" and clip_skip > 1:
-        gen_params["clip_skip"] = clip_skip
+    print(f"Generating: {prompt[:60]}... | Seed={seed}")
 
     try:
-        output = pipe(**gen_params)
+        output = pipe(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            height=height,
+            width=width,
+            num_inference_steps=steps,
+            guidance_scale=cfg_scale,
+            generator=generator
+        )
+
         image = output.images[0]
-        
+
         # Convert to base64
         buffered = io.BytesIO()
+
         if output_format == "PNG":
             image.save(buffered, format="PNG")
         else:
-            # JPEG is much smaller; convert RGBA->RGB if needed
             if image.mode in ("RGBA", "P"):
                 image = image.convert("RGB")
             image.save(buffered, format="JPEG", quality=output_quality)
+
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+        # 🔥 IMPORTANT: reduce VRAM issues
+        if device == "cuda":
+            torch.cuda.empty_cache()
 
         return {
             "image": img_str,
@@ -190,7 +157,9 @@ def handler(job):
                 "model": pipeline_info["model_type"]
             }
         }
+
     except Exception as e:
         return {"error": str(e)}
+
 
 runpod.serverless.start({"handler": handler})
